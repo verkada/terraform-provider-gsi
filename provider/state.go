@@ -94,7 +94,6 @@ func (e *TimeoutError) Unwrap() error {
 	return e.LastError
 }
 
-
 var refreshGracePeriod = 30 * time.Second
 
 // StateRefreshFunc is a function type used for StateChangeConf that is

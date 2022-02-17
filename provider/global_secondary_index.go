@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -22,49 +23,75 @@ func dynamoDBGSIResource() *schema.Resource {
 	return &schema.Resource{
 		Schema: map[string]*schema.Schema{
 			"arn": {
-				Type:     schema.TypeString,
-				Computed: true,
+				Type:        schema.TypeString,
+				Computed:    true,
+				Description: "ARN of the Global Secondary Index.",
 			},
 			"table_name": {
-				Type:     schema.TypeString,
-				Required: true,
-				ForceNew: true,
-			},
-			"hash_key": {
-				Type:     schema.TypeString,
-				Required: true,
-				ForceNew: true,
+				Type:        schema.TypeString,
+				Required:    true,
+				ForceNew:    true,
+				Description: "Name of the DynamoDB table to which the GSI is associated..",
 			},
 			"name": {
-				Type:     schema.TypeString,
-				Required: true,
-				ForceNew: true,
+				Type:        schema.TypeString,
+				Required:    true,
+				ForceNew:    true,
+				Description: "Name of the index.",
 			},
 			"non_key_attributes": {
-				Type:     schema.TypeSet,
-				Optional: true,
-				Elem:     &schema.Schema{Type: schema.TypeString},
-				ForceNew: true,
+				Type:        schema.TypeSet,
+				Optional:    true,
+				Elem:        &schema.Schema{Type: schema.TypeString},
+				ForceNew:    true,
+				Description: "Additional attributes to include based in the projection.",
 			},
 			"projection_type": {
 				Type:         schema.TypeString,
 				Required:     true,
 				ValidateFunc: stringInSlice(dynamodb.ProjectionType_Values(), false),
 				ForceNew:     true,
+				Description:  "Projection type.",
+			},
+			"hash_key": {
+				Type:        schema.TypeString,
+				Required:    true,
+				ForceNew:    true,
+				Description: "Hash key of the index.",
 			},
 			"range_key": {
-				Type:     schema.TypeString,
-				Optional: true,
-				ForceNew: true,
+				Type:        schema.TypeString,
+				Optional:    true,
+				ForceNew:    true,
+				Description: "Range key of the index.",
 			},
-			// An autoscaler must be set, these values are only used on creation.
-			"initial_read_capacity": {
-				Type:     schema.TypeInt,
-				Required: true,
+			"hash_key_type": {
+				Type:        schema.TypeString,
+				Required:    true,
+				ForceNew:    true,
+				Description: "Type of the hash key.",
 			},
-			"initial_write_capacity": {
-				Type:     schema.TypeInt,
-				Required: true,
+			"range_key_type": {
+				Type:        schema.TypeString,
+				Optional:    true,
+				ForceNew:    true,
+				Description: "Type of the range key.",
+			},
+			"read_capacity": {
+				Type:        schema.TypeInt,
+				Required:    true,
+				Description: "Read capacity for the index, untracked after creation if autoscaling is enabled.",
+			},
+			"write_capacity": {
+				Type:        schema.TypeInt,
+				Required:    true,
+				Description: "Write capacity for the table, untracked after creation if autoscaling is enabled.",
+			},
+			"autoscaling_enabled": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Description: "Whether capacity is controlled by an autoscaler.",
+				Default:     false,
 			},
 		},
 		Create: dynamoDBGSICreate,
@@ -83,6 +110,8 @@ func dynamoDBGSICreate(d *schema.ResourceData, m interface{}) error {
 	in := d.Get("name").(string)
 
 	if d.IsNewResource() && p.autoImport {
+		// If auto-import is enabled, we just capture the current state and a drift should be
+		// expected of the next plan if the imported state is different from that of this GSI.
 		found, err := readGSI(d, p.c, tn, in)
 		if err != nil {
 			return err
@@ -95,6 +124,22 @@ func dynamoDBGSICreate(d *schema.ResourceData, m interface{}) error {
 		}
 	}
 
+	ad, err := getAttributeDefinition(p.c, tn)
+	if err != nil {
+		return err
+	}
+
+	hType := d.Get("hash_key_type")
+	rhType := getAttributeType(ad, aws.String(d.Get("hash_key").(string)))
+	if rhType == "" {
+		ad = append(ad, &dynamodb.AttributeDefinition{
+			AttributeName: aws.String(d.Get("hash_key").(string)),
+			AttributeType: aws.String(hType.(string)),
+		})
+	} else if rhType != hType {
+		return errors.New("Hash key type does not match the existing definition on the table")
+	}
+
 	keySchema := []*dynamodb.KeySchemaElement{
 		&dynamodb.KeySchemaElement{
 			AttributeName: aws.String(d.Get("hash_key").(string)),
@@ -103,6 +148,20 @@ func dynamoDBGSICreate(d *schema.ResourceData, m interface{}) error {
 	}
 
 	if r, ok := d.GetOk("range_key"); ok {
+		rType, e := d.GetOkExists("range_key_type")
+		if !e {
+			return errors.New("Missing range_key_type")
+		}
+		rrType := getAttributeType(ad, aws.String(r.(string)))
+		if rrType == "" {
+			ad = append(ad, &dynamodb.AttributeDefinition{
+				AttributeName: aws.String(r.(string)),
+				AttributeType: aws.String(rType.(string)),
+			})
+		} else if rType != rrType {
+			return errors.New("Range key type does not match the existing definition on the table")
+		}
+
 		keySchema = append(keySchema, &dynamodb.KeySchemaElement{
 			AttributeName: aws.String(r.(string)),
 			KeyType:       aws.String(dynamodb.KeyTypeRange),
@@ -121,13 +180,8 @@ func dynamoDBGSICreate(d *schema.ResourceData, m interface{}) error {
 		}
 	}
 
-	ad, err := getAttributeDefinition(p.c, tn)
-	if err != nil {
-		return err
-	}
-
 	input := dynamodb.UpdateTableInput{
-		TableName: aws.String(tn),
+		TableName:            aws.String(tn),
 		AttributeDefinitions: ad,
 		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
 			&dynamodb.GlobalSecondaryIndexUpdate{
@@ -136,8 +190,8 @@ func dynamoDBGSICreate(d *schema.ResourceData, m interface{}) error {
 					KeySchema:  keySchema,
 					Projection: projection,
 					ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
-						ReadCapacityUnits:  aws.Int64(int64(d.Get("initial_read_capacity").(int))),
-						WriteCapacityUnits: aws.Int64(int64(d.Get("initial_write_capacity").(int))),
+						ReadCapacityUnits:  aws.Int64(int64(d.Get("read_capacity").(int))),
+						WriteCapacityUnits: aws.Int64(int64(d.Get("write_capacity").(int))),
 					},
 				},
 			},
@@ -151,6 +205,12 @@ func dynamoDBGSICreate(d *schema.ResourceData, m interface{}) error {
 
 	if err = waitDynamoDBGSIActive(p.c, tn, in); err != nil {
 		return err
+	}
+
+	if !d.Get("autoscaling_enabled").(bool) {
+		// Don't persist the capacity in the state if it is managed by an autoscaler.
+		d.Set("read_capacity", nil)
+		d.Set("write_capacity", nil)
 	}
 
 	d.SetId(fmt.Sprintf("%s:%s", tn, in))
@@ -170,6 +230,7 @@ func getAttributeDefinition(c *dynamodb.DynamoDB, tn string) ([]*dynamodb.Attrib
 }
 
 func idToNames(id string) (string, string, error) {
+	// Convert the GSI name to (table_name, index_name).
 	splits := strings.SplitN(id, ":", 2)
 	if len(splits) != 2 {
 		return "", "", fmt.Errorf("Invalid DynamoDB GSI ID (%s)", id)
@@ -200,8 +261,17 @@ func dynamoDBGSIRead(d *schema.ResourceData, m interface{}) error {
 	return err
 }
 
+func getAttributeType(ad []*dynamodb.AttributeDefinition, n *string) string {
+	for _, attr := range ad {
+		if *attr.AttributeName == *n {
+			return *attr.AttributeType
+		}
+	}
+	return ""
+}
+
 func readGSI(d *schema.ResourceData, c *dynamodb.DynamoDB, tn string, in string) (bool, error) {
-	i, err := describeGSI(c, tn, in)
+	t, i, err := describeGSI(c, tn, in)
 	if err != nil {
 		return false, err
 	}
@@ -212,30 +282,75 @@ func readGSI(d *schema.ResourceData, c *dynamodb.DynamoDB, tn string, in string)
 
 	d.Set("arn", i.IndexArn)
 
-	d.Set("range_key", nil)
+	// Since readGSI can be used on an import on create, we need to erase the optional value from the
+	// state or we will end up with writing a state that is the expected one rather than the applied one
+	// if the applied one does not have the values set.
+	for _, attr := range []string{"range_key", "non_key_attributes", "projection_type"} {
+		d.Set(attr, nil)
+	}
+
 	for _, attribute := range i.KeySchema {
+		attrType := getAttributeType(t.AttributeDefinitions, attribute.AttributeName)
+		if attrType == "" {
+			return true, fmt.Errorf("Attribute %s not defined on table", *attribute.AttributeName)
+		}
+
 		if aws.StringValue(attribute.KeyType) == dynamodb.KeyTypeHash {
 			d.Set("hash_key", attribute.AttributeName)
+			d.Set("hash_key_type", attrType)
 		}
 
 		if aws.StringValue(attribute.KeyType) == dynamodb.KeyTypeRange {
 			d.Set("range_key", attribute.AttributeName)
+			d.Set("range_key_type", attrType)
 		}
 	}
 
-	d.Set("non_key_attributes", nil)
-	d.Set("projection_type", nil)
 	if i.Projection != nil {
 		d.Set("projection_type", aws.StringValue(i.Projection.ProjectionType))
 		d.Set("non_key_attributes", aws.StringValueSlice(i.Projection.NonKeyAttributes))
+	}
+
+	if !d.Get("autoscaling_enabled").(bool) && i.ProvisionedThroughput != nil {
+		d.Set("read_capacity", i.ProvisionedThroughput.ReadCapacityUnits)
+		d.Set("write_capacity", i.ProvisionedThroughput.WriteCapacityUnits)
 	}
 
 	return true, nil
 }
 
 func dynamoDBGSIUpdate(d *schema.ResourceData, m interface{}) error {
-	// Non of the fields are updatable.
-	return nil
+	c := m.(*GSIProvider).c
+	tn, in, err := idToNames(d.Id())
+
+	if err != nil {
+		return err
+	}
+
+	if d.HasChange("autoscaling_enabled") && d.Get("autoscaling_enabled").(bool) {
+		if _, err := c.UpdateTable(&dynamodb.UpdateTableInput{
+			TableName: aws.String(tn),
+			GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
+				&dynamodb.GlobalSecondaryIndexUpdate{
+					Update: &dynamodb.UpdateGlobalSecondaryIndexAction{
+						IndexName: aws.String(in),
+						ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
+							ReadCapacityUnits:  aws.Int64(int64(d.Get("read_capacity").(int))),
+							WriteCapacityUnits: aws.Int64(int64(d.Get("write_capacity").(int))),
+						},
+					},
+				},
+			},
+		}); err != nil {
+			return err
+		}
+
+		if err := waitDynamoDBGSIActive(c, tn, in); err != nil {
+			return fmt.Errorf("error waiting for DynamoDB GSI (%s) update on table %s: %w", in, tn, err)
+		}
+	}
+
+	return dynamoDBGSIRead(d, m)
 }
 
 func dynamoDBGSIDelete(d *schema.ResourceData, m interface{}) error {
@@ -244,6 +359,8 @@ func dynamoDBGSIDelete(d *schema.ResourceData, m interface{}) error {
 	if err != nil {
 		return err
 	}
+
+	log.Printf("[DEBUG] Deleting Dynamodb Table GSI %s on table %s", in, tn)
 
 	_, err = c.UpdateTable(&dynamodb.UpdateTableInput{
 		TableName: aws.String(tn),
@@ -270,30 +387,30 @@ func dynamoDBGSIDelete(d *schema.ResourceData, m interface{}) error {
 	return nil
 }
 
-func describeGSI(c *dynamodb.DynamoDB, tn string, in string) (*dynamodb.GlobalSecondaryIndexDescription, error) {
+func describeGSI(c *dynamodb.DynamoDB, tn string, in string) (*dynamodb.TableDescription, *dynamodb.GlobalSecondaryIndexDescription, error) {
 	t, err := c.DescribeTable(&dynamodb.DescribeTableInput{
 		TableName: aws.String(tn),
 	})
 	if err != nil {
 		if aerr, ok := err.(awserr.Error); ok && aerr.Code() == dynamodb.ErrCodeResourceNotFoundException {
-			return nil, nil
+			return nil, nil, nil
 		}
 
-		return nil, fmt.Errorf("error reading Dynamodb Table (%s): %w", tn, err)
+		return nil, nil, fmt.Errorf("error reading Dynamodb Table (%s): %w", tn, err)
 	}
 
 	for _, i := range t.Table.GlobalSecondaryIndexes {
 		if *i.IndexName == in {
-			return i, nil
+			return t.Table, i, nil
 		}
 	}
 
-	return nil, nil
+	return nil, nil, nil
 }
 
 func statusDynamoDBGSI(c *dynamodb.DynamoDB, tn string, in string) StateRefreshFunc {
 	return func() (interface{}, string, error) {
-		i, err := describeGSI(c, tn, in)
+		_, i, err := describeGSI(c, tn, in)
 		if err != nil {
 			return nil, "", err
 		}

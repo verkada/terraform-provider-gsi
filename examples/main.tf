@@ -1,27 +1,44 @@
 terraform {
-  required_providers {
-    vinfra = {
-      version = "0.1"
-      source = "verkada/vinfra"
+    required_providers {
+        gsi = {
+            source  = "verkada/gsi"
+        }
     }
+}
+
+provider "aws" {
+}
+
+resource "aws_dynamodb_table" "test_table" {
+  name           = "test_table"
+  read_capacity  = 5
+  write_capacity = 5
+  hash_key       = "UserId"
+
+  attribute {
+    name = "UserId"
+    type = "S"
+  }
+
+  lifecycle {
+    ignore_changes = [global_secondary_index, attribute]
   }
 }
 
-provider "vinfra" {
-    region = "us-west-2"
-    profile = "hiring"
-    auto_import = true
-}
+resource "gsi_global_secondary_index" "test_index" {
+    name       = "test_index"
+    table_name = aws_dynamodb_table.test_table.name
 
-resource "vinfra_gsi" "sample" {
-    table_name = "sample-table"
-    name            = "effectiveEntityId-creation-index-2"
-    hash_key        = "effectiveEntityId"
-    non_key_attributes = [
-    "tokenHash",
+    hash_key       = "UserId"
+    hash_key_type  = "S"
+    range_key      = "OrderId"
+    range_key_type = "S"
+
+    read_capacity   = 5
+	write_capacity  = 5
+	projection_type = "KEYS_ONLY"
+
+    depends_on = [
+      aws_dynamodb_table.test_table
     ]
-    range_key       = "creation"
-    projection_type = "INCLUDE"
-    initial_read_capacity   = 5
-    initial_write_capacity  = 5
 }
