@@ -4,7 +4,7 @@
 
 This provider is a workaround to a limitation of the AWS provider (and TF language) which prevents the management of global secondary indexes associated with an autoscaler.
 
-The approach is to decouple the table resource (still owned by the AWS provider) from the GSI resource whilegi ignoring the GSIs on the table.
+The approach is to decouple the table resource (still owned by the AWS provider) from the GSI resource while ignoring the GSIs on the table.
 
 ```terraform
 
