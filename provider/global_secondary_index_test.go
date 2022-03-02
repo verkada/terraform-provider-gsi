@@ -29,7 +29,7 @@ func newTestClient() (*dynamodb.DynamoDB, error) {
 	return newClient(region, accessKey, secretKey, token, profile, endpoint)
 }
 
-func statusDynamoDBTable(c *dynamodb.DynamoDB, tn string) StateRefreshFunc {
+func statusDynamoDBTable(c *dynamodb.DynamoDB, tn string) resource.StateRefreshFunc {
 	return func() (interface{}, string, error) {
 		t, err := c.DescribeTable(&dynamodb.DescribeTableInput{TableName: aws.String(tn)})
 		if err != nil {
@@ -44,7 +44,7 @@ func statusDynamoDBTable(c *dynamodb.DynamoDB, tn string) StateRefreshFunc {
 }
 
 func waitDynamoDBTableActive(c *dynamodb.DynamoDB, tn string) error {
-	stateConf := &StateChangeConf{
+	stateConf := &resource.StateChangeConf{
 		Pending: []string{
 			dynamodb.TableStatusCreating,
 			dynamodb.TableStatusUpdating,

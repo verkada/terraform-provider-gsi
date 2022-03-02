@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
@@ -408,7 +409,7 @@ func describeGSI(c *dynamodb.DynamoDB, tn string, in string) (*dynamodb.TableDes
 	return nil, nil, nil
 }
 
-func statusDynamoDBGSI(c *dynamodb.DynamoDB, tn string, in string) StateRefreshFunc {
+func statusDynamoDBGSI(c *dynamodb.DynamoDB, tn string, in string) resource.StateRefreshFunc {
 	return func() (interface{}, string, error) {
 		_, i, err := describeGSI(c, tn, in)
 		if err != nil {
@@ -423,7 +424,7 @@ func statusDynamoDBGSI(c *dynamodb.DynamoDB, tn string, in string) StateRefreshF
 }
 
 func waitDynamoDBGSIDeleted(c *dynamodb.DynamoDB, tn string, in string) error {
-	stateConf := &StateChangeConf{
+	stateConf := &resource.StateChangeConf{
 		Pending: []string{
 			dynamodb.IndexStatusDeleting,
 			dynamodb.IndexStatusActive,
@@ -439,7 +440,7 @@ func waitDynamoDBGSIDeleted(c *dynamodb.DynamoDB, tn string, in string) error {
 }
 
 func waitDynamoDBGSIActive(c *dynamodb.DynamoDB, tn string, in string) error {
-	stateConf := &StateChangeConf{
+	stateConf := &resource.StateChangeConf{
 		Pending: []string{
 			dynamodb.IndexStatusCreating,
 			dynamodb.IndexStatusUpdating,

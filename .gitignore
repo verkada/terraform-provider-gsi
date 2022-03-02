@@ -1,32 +1,8 @@
 .DS_Store
-terraform-provider-hashicups
+terraform-provider-gsi
 bin
+vendor
 
-# Created by https://www.toptal.com/developers/gitignore/api/go,terraform
-# Edit at https://www.toptal.com/developers/gitignore?templates=go,terraform
-
-### Go ###
-# Binaries for programs and plugins
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-
-# Test binary, built with `go test -c`
-*.test
-
-# Output of the go coverage tool, specifically when used with LiteIDE
-*.out
-
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-### Go Patch ###
-/vendor/
-/Godeps/
-
-### Terraform ###
 # Local .terraform directories
 **/.terraform/*
 
@@ -51,16 +27,13 @@ override.tf.json
 *_override.tf.json
 
 # Include override files you do wish to add to version control using negated pattern
+#
 # !example_override.tf
 
 # Include tfplan files to ignore the plan output of command: terraform plan -out=tfplan
 # example: *tfplan*
 
-# End of https://www.toptal.com/developers/gitignore/api/go,terraform
-
 # Ignore CLI configuration files
 .terraformrc
 terraform.rc
 terraform
-
-terraform-provider-gsi
