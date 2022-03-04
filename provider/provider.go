@@ -16,7 +16,7 @@ type GSIProvider struct {
 	autoImport bool
 }
 
-func Provider() *schema.Provider {
+func providerWithConfigure(cfgFn schema.ConfigureFunc) *schema.Provider {
 	return &schema.Provider{
 		Schema: map[string]*schema.Schema{
 			"access_key": {
@@ -74,8 +74,12 @@ func Provider() *schema.Provider {
 		ResourcesMap: map[string]*schema.Resource{
 			"gsi_global_secondary_index": dynamoDBGSIResource(),
 		},
-		ConfigureFunc: providerConfigure,
+		ConfigureFunc: cfgFn,
 	}
+}
+
+func Provider() *schema.Provider {
+	return providerWithConfigure(providerConfigure)
 }
 
 func newClient(region string, accessKey string, secretKey string, token string, profile string, endpoint string) (*dynamodb.DynamoDB, error) {
