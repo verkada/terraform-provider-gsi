@@ -41,7 +41,9 @@ resource "gsi_global_secondary_index" "test_index" {
 }
 ```
 
-Since you might have a lot of existing GSIs already, you can use `auto_import = true` in the provider configuration. When set, the first create will automatically import the GSI if one with the same name exists. Note that it will not attempt to correct drift so it might be a two step process to get to a clean plan.
+If you have an autoscaler (the whole point of using this resource), consider adding a `depends_on` the GSIs since the autoscaler cannot reference a GSI that does not exits yet.
+
+Since you might have a lot of existing GSIs already, you can use `auto_import = true` in the provider configuration and then remove it once the migration is done. When set, the first create will automatically import the GSI if one with the same name exists. Note that it will not attempt to correct drift so it might be a two step process to get to a clean plan.
 
 ## Build
 
