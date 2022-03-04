@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
 const (
@@ -82,11 +83,19 @@ func dynamoDBGSIResource() *schema.Resource {
 				Type:        schema.TypeInt,
 				Required:    true,
 				Description: "Read capacity for the index, untracked after creation if autoscaling is enabled.",
+				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
+					return old != "" && d.Get("autoscaling_enabled").(bool)
+				},
+				ValidateFunc: validation.IntAtLeast(1),
 			},
 			"write_capacity": {
 				Type:        schema.TypeInt,
 				Required:    true,
 				Description: "Write capacity for the table, untracked after creation if autoscaling is enabled.",
+				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
+					return old != "" && d.Get("autoscaling_enabled").(bool)
+				},
+				ValidateFunc: validation.IntAtLeast(1),
 			},
 			"autoscaling_enabled": {
 				Type:        schema.TypeBool,
@@ -283,10 +292,11 @@ func readGSI(d *schema.ResourceData, c *dynamodb.DynamoDB, tn string, in string)
 
 	d.Set("arn", i.IndexArn)
 
-	// Since readGSI can be used on an import on create, we need to erase the optional value from the
+	// Since readGSI can be used on an import on create, we need to erase the optional values from the
 	// state or we will end up with writing a state that is the expected one rather than the applied one
 	// if the applied one does not have the values set.
-	for _, attr := range []string{"range_key", "non_key_attributes", "projection_type"} {
+	d.Set("non_key_attributes", []string{})
+	for _, attr := range []string{"range_key", "projection_type"} {
 		d.Set(attr, nil)
 	}
 
@@ -312,7 +322,7 @@ func readGSI(d *schema.ResourceData, c *dynamodb.DynamoDB, tn string, in string)
 		d.Set("non_key_attributes", aws.StringValueSlice(i.Projection.NonKeyAttributes))
 	}
 
-	if !d.Get("autoscaling_enabled").(bool) && i.ProvisionedThroughput != nil {
+	if i.ProvisionedThroughput != nil {
 		d.Set("read_capacity", i.ProvisionedThroughput.ReadCapacityUnits)
 		d.Set("write_capacity", i.ProvisionedThroughput.WriteCapacityUnits)
 	}
@@ -328,26 +338,37 @@ func dynamoDBGSIUpdate(d *schema.ResourceData, m interface{}) error {
 		return err
 	}
 
-	if d.HasChange("autoscaling_enabled") && d.Get("autoscaling_enabled").(bool) {
-		if _, err := c.UpdateTable(&dynamodb.UpdateTableInput{
-			TableName: aws.String(tn),
-			GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
-				&dynamodb.GlobalSecondaryIndexUpdate{
-					Update: &dynamodb.UpdateGlobalSecondaryIndexAction{
-						IndexName: aws.String(in),
-						ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
-							ReadCapacityUnits:  aws.Int64(int64(d.Get("read_capacity").(int))),
-							WriteCapacityUnits: aws.Int64(int64(d.Get("write_capacity").(int))),
-						},
-					},
-				},
-			},
-		}); err != nil {
-			return err
+	if d.HasChange("autoscaling_enabled") && !d.Get("autoscaling_enabled").(bool) {
+		update := &dynamodb.UpdateGlobalSecondaryIndexAction{
+			IndexName:             aws.String(in),
+			ProvisionedThroughput: &dynamodb.ProvisionedThroughput{},
 		}
 
-		if err := waitDynamoDBGSIActive(c, tn, in); err != nil {
-			return fmt.Errorf("error waiting for DynamoDB GSI (%s) update on table %s: %w", in, tn, err)
+		changed := false
+		if d.HasChange("read_capaciity") {
+			changed = true
+			update.ProvisionedThroughput.ReadCapacityUnits = aws.Int64(int64(d.Get("read_capacity").(int)))
+		}
+		if d.HasChange("write_capacity") {
+			changed = true
+			update.ProvisionedThroughput.WriteCapacityUnits = aws.Int64(int64(d.Get("write_capacity").(int)))
+		}
+
+		if changed {
+			if _, err := c.UpdateTable(&dynamodb.UpdateTableInput{
+				TableName: aws.String(tn),
+				GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
+					&dynamodb.GlobalSecondaryIndexUpdate{
+						Update: update,
+					},
+				},
+			}); err != nil {
+				return err
+			}
+
+			if err := waitDynamoDBGSIActive(c, tn, in); err != nil {
+				return fmt.Errorf("error waiting for DynamoDB GSI (%s) update on table %s: %w", in, tn, err)
+			}
 		}
 	}
 

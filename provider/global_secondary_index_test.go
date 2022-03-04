@@ -3,6 +3,7 @@ package provider
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"testing"
 	"time"
@@ -156,15 +157,16 @@ func TestAccCreateBasicAutoscaling(t *testing.T) {
 			{
 				Config: `
 resource "gsi_global_secondary_index" "gsi" {
-	name            = "basic_index"
-	table_name      = "test_table"
-	read_capacity   = 5
-	write_capacity  = 5
-	hash_key        = "p"
-	hash_key_type   = "S"
-	range_key       = "r"
-	range_key_type  = "N"
-	projection_type = "KEYS_ONLY"
+	name                = "basic_index"
+	table_name          = "test_table"
+	read_capacity       = 5
+	write_capacity      = 5
+	hash_key            = "p"
+	hash_key_type       = "S"
+	range_key           = "r"
+	range_key_type      = "N"
+	projection_type     = "KEYS_ONLY"
+	autoscaling_enabled = true
 }`,
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckGSIGlobalSecondaryIndexExists("gsi", "test_table", "basic_index"),
@@ -173,6 +175,92 @@ resource "gsi_global_secondary_index" "gsi" {
 			},
 		},
 	})
+}
+
+func TestAccSwitchAutoscaling(t *testing.T) {
+	c, err := newTestClient()
+	if err != nil {
+		t.Fatal("Could not create dynamodb client", err)
+		return
+	}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck: func() {
+			testAccPreCheck(t, c, "test_table", map[string]string{"p": "S"}, map[string]string{"p": "HASH"})
+		},
+		Providers: map[string]*schema.Provider{
+			"gsi": Provider(),
+		},
+		Steps: []resource.TestStep{
+			{
+				Config: `
+resource "gsi_global_secondary_index" "gsi" {
+	name                = "basic_index"
+	table_name          = "test_table"
+	read_capacity       = 5
+	write_capacity      = 5
+	hash_key            = "p"
+	hash_key_type       = "S"
+	range_key           = "r"
+	range_key_type      = "N"
+	projection_type     = "KEYS_ONLY"
+	autoscaling_enabled = false
+}`,
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckGSIGlobalSecondaryIndexExists("gsi", "test_table", "basic_index"),
+					testAccCheckGSIGlobalSecondaryIndexValues(c, "test_table", "basic_index", "p", "r", "KEYS_ONLY"),
+				),
+			},
+			{
+				PreConfig: simulateAutoscaling(c, "test_table", "basic_index", 10, 10),
+				Config: `
+resource "gsi_global_secondary_index" "gsi" {
+	name                = "basic_index"
+	table_name          = "test_table"
+	read_capacity       = 5
+	write_capacity      = 5
+	hash_key            = "p"
+	hash_key_type       = "S"
+	range_key           = "r"
+	range_key_type      = "N"
+	projection_type     = "KEYS_ONLY"
+	autoscaling_enabled = true
+}`,
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckGSIGlobalSecondaryIndexExists("gsi", "test_table", "basic_index"),
+					testAccCheckGSIGlobalSecondaryIndexValues(c, "test_table", "basic_index", "p", "r", "KEYS_ONLY"),
+				),
+			},
+		},
+	})
+}
+
+func simulateAutoscaling(c *dynamodb.DynamoDB, tn, in string, rc, wc int64) func() {
+	return func() {
+		input := dynamodb.UpdateTableInput{
+			TableName: aws.String(tn),
+			GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
+				&dynamodb.GlobalSecondaryIndexUpdate{
+					Update: &dynamodb.UpdateGlobalSecondaryIndexAction{
+						IndexName: aws.String(in),
+						ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
+							ReadCapacityUnits:  aws.Int64(rc),
+							WriteCapacityUnits: aws.Int64(wc),
+						},
+					},
+				},
+			},
+		}
+
+		_, err := c.UpdateTable(&input)
+		if err != nil {
+			log.Fatal("Failed to update table", err)
+		}
+
+		if err = waitDynamoDBGSIActive(c, tn, in); err != nil {
+			log.Fatal("Failed to update table", err)
+		}
+	}
 }
 
 func testAccCheckGSIGlobalSecondaryIndexValues(c *dynamodb.DynamoDB, tn, in string, hashKey, rangeKey string, projection string) resource.TestCheckFunc {
