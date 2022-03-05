@@ -110,12 +110,13 @@ func TestAccCreateBasic(t *testing.T) {
 		return
 	}
 
+	if err := createTable(c, "test_table", map[string]string{"p": "S"}, map[string]string{"p": "HASH"}); err != nil {
+		t.Fatal("Failed to create test table", err)
+	}
+
 	resource.Test(t, resource.TestCase{
-		PreCheck: func() {
-			testAccPreCheck(t, c, "test_table", map[string]string{"p": "S"}, map[string]string{"p": "HASH"})
-		},
 		Providers: map[string]*schema.Provider{
-			"gsi": Provider(),
+			"gsi": providerWithConfigure(testProviderConfigure(false)),
 		},
 		Steps: []resource.TestStep{
 			{
@@ -146,12 +147,13 @@ func TestAccCreateBasicAutoscaling(t *testing.T) {
 		return
 	}
 
+	if err := createTable(c, "test_table", map[string]string{"p": "S"}, map[string]string{"p": "HASH"}); err != nil {
+		t.Fatal("Failed to create test table", err)
+	}
+
 	resource.Test(t, resource.TestCase{
-		PreCheck: func() {
-			testAccPreCheck(t, c, "test_table", map[string]string{"p": "S"}, map[string]string{"p": "HASH"})
-		},
 		Providers: map[string]*schema.Provider{
-			"gsi": Provider(),
+			"gsi": providerWithConfigure(testProviderConfigure(false)),
 		},
 		Steps: []resource.TestStep{
 			{
@@ -184,12 +186,13 @@ func TestAccSwitchAutoscaling(t *testing.T) {
 		return
 	}
 
+	if err := createTable(c, "test_table", map[string]string{"p": "S"}, map[string]string{"p": "HASH"}); err != nil {
+		t.Fatal("Failed to create test table", err)
+	}
+
 	resource.Test(t, resource.TestCase{
-		PreCheck: func() {
-			testAccPreCheck(t, c, "test_table", map[string]string{"p": "S"}, map[string]string{"p": "HASH"})
-		},
 		Providers: map[string]*schema.Provider{
-			"gsi": Provider(),
+			"gsi": providerWithConfigure(testProviderConfigure(false)),
 		},
 		Steps: []resource.TestStep{
 			{
@@ -223,6 +226,93 @@ resource "gsi_global_secondary_index" "gsi" {
 	hash_key_type       = "S"
 	range_key           = "r"
 	range_key_type      = "N"
+	projection_type     = "KEYS_ONLY"
+	autoscaling_enabled = true
+}`,
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckGSIGlobalSecondaryIndexExists("gsi", "test_table", "basic_index"),
+					testAccCheckGSIGlobalSecondaryIndexValues(c, "test_table", "basic_index", "p", "r", "KEYS_ONLY"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccAutoImport(t *testing.T) {
+	c, err := newTestClient()
+	if err != nil {
+		t.Fatal("Could not create dynamodb client", err)
+		return
+	}
+
+	if err := createTable(c, "test_table", map[string]string{"p": "S"}, map[string]string{"p": "HASH"}); err != nil {
+		t.Fatal("Failed to create test table", err)
+	}
+
+	input := dynamodb.UpdateTableInput{
+		TableName: aws.String("test_table"),
+		AttributeDefinitions: []*dynamodb.AttributeDefinition{
+			{
+				AttributeName: aws.String("p"),
+				AttributeType: aws.String("S"),
+			},
+			{
+				AttributeName: aws.String("r"),
+				AttributeType: aws.String("S"),
+			},
+		},
+		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
+			&dynamodb.GlobalSecondaryIndexUpdate{
+				Create: &dynamodb.CreateGlobalSecondaryIndexAction{
+					IndexName: aws.String("basic_index"),
+					KeySchema: []*dynamodb.KeySchemaElement{
+						{
+							AttributeName: aws.String("p"),
+							KeyType:       aws.String(dynamodb.KeyTypeHash),
+						},
+						{
+							AttributeName: aws.String("r"),
+							KeyType:       aws.String(dynamodb.KeyTypeRange),
+						},
+					},
+					Projection: &dynamodb.Projection{
+						NonKeyAttributes: nil,
+						ProjectionType:   aws.String("KEYS_ONLY"),
+					},
+					ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
+						ReadCapacityUnits:  aws.Int64(10),
+						WriteCapacityUnits: aws.Int64(10),
+					},
+				},
+			},
+		},
+	}
+
+	_, err = c.UpdateTable(&input)
+	if err != nil {
+		log.Fatal("Failed to update table", err)
+	}
+
+	if err = waitDynamoDBGSIActive(c, "test_table", "basic_index"); err != nil {
+		log.Fatal("Failed to update table", err)
+	}
+
+	resource.Test(t, resource.TestCase{
+		Providers: map[string]*schema.Provider{
+			"gsi": providerWithConfigure(testProviderConfigure(true)),
+		},
+		Steps: []resource.TestStep{
+			{
+				Config: `
+resource "gsi_global_secondary_index" "gsi" {
+	name                = "basic_index"
+	table_name          = "test_table"
+	read_capacity       = 5
+	write_capacity      = 5
+	hash_key            = "p"
+	hash_key_type       = "S"
+	range_key           = "r"
+	range_key_type      = "S"
 	projection_type     = "KEYS_ONLY"
 	autoscaling_enabled = true
 }`,
