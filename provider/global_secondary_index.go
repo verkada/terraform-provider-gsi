@@ -463,10 +463,10 @@ func waitDynamoDBGSIDeleted(c *dynamodb.DynamoDB, tn string, in string) error {
 func waitDynamoDBGSIActive(c *dynamodb.DynamoDB, tn string, in string) error {
 	stateConf := &resource.StateChangeConf{
 		Pending: []string{
-			dynamodb.IndexStatusCreating,
 			dynamodb.IndexStatusUpdating,
 		},
 		Target: []string{
+			dynamodb.IndexStatusCreating,
 			dynamodb.IndexStatusActive,
 		},
 		Timeout: createGSITimeout,
