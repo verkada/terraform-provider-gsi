@@ -140,6 +140,44 @@ resource "gsi_global_secondary_index" "gsi" {
 	})
 }
 
+func TestAccCreateBasicPayPerRequest(t *testing.T) {
+	c, err := newTestClient()
+	if err != nil {
+		t.Fatal("Could not create dynamodb client", err)
+		return
+	}
+
+	if err := createTableWithMode(c, "test_table", map[string]string{"p": "S"}, map[string]string{"p": "HASH"}, dynamodb.BillingModePayPerRequest); err != nil {
+		t.Fatal("Failed to create test table", err)
+	}
+
+	resource.Test(t, resource.TestCase{
+		Providers: map[string]*schema.Provider{
+			"gsi": providerWithConfigure(testProviderConfigure(false)),
+		},
+		Steps: []resource.TestStep{
+			{
+				Config: `
+resource "gsi_global_secondary_index" "gsi" {
+	name            = "basic_index"
+	table_name      = "test_table"
+	read_capacity   = 5
+	write_capacity  = 5
+	hash_key        = "p"
+	hash_key_type   = "S"
+	range_key       = "r"
+	range_key_type  = "N"
+	billing_mode    = "PAY_PER_REQUEST"
+	projection_type = "KEYS_ONLY"
+}`,
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckGSIGlobalSecondaryIndexExists("gsi", "test_table", "basic_index"),
+					testAccCheckGSIGlobalSecondaryIndexValues(c, "test_table", "basic_index", "p", "r", "KEYS_ONLY"),
+				)},
+		},
+	})
+}
+
 func TestAccCreateBasicAutoscaling(t *testing.T) {
 	c, err := newTestClient()
 	if err != nil {

@@ -79,10 +79,17 @@ func dynamoDBGSIResource() *schema.Resource {
 				ForceNew:    true,
 				Description: "Type of the range key.",
 			},
+			"billing_mode": {
+				Type: schema.TypeString,
+				Optional: true,
+				ValidateFunc: stringInSlice(dynamodb.BillingMode_Values(), false),
+				Default: dynamodb.BillingModeProvisioned,
+				Description: "The billing mode to apply to this index. Should match the associated table",
+			},
 			"read_capacity": {
 				Type:        schema.TypeInt,
 				Required:    true,
-				Description: "Read capacity for the index, untracked after creation if autoscaling is enabled.",
+				Description: "Read capacity for the index, only used for 'PROVISIONED' billing mode. Untracked after creation if autoscaling is enabled.",
 				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
 					return old != "" && d.Get("autoscaling_enabled").(bool)
 				},
@@ -91,7 +98,7 @@ func dynamoDBGSIResource() *schema.Resource {
 			"write_capacity": {
 				Type:        schema.TypeInt,
 				Required:    true,
-				Description: "Write capacity for the table, untracked after creation if autoscaling is enabled.",
+				Description: "Write capacity for the table, only used for 'PROVISIONED' billing mode.  Untracked after creation if autoscaling is enabled.",
 				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
 					return old != "" && d.Get("autoscaling_enabled").(bool)
 				},
@@ -206,6 +213,11 @@ func dynamoDBGSICreate(d *schema.ResourceData, m interface{}) error {
 				},
 			},
 		},
+	}
+
+	if d.Get("billing_mode") == dynamodb.BillingModePayPerRequest {
+		// Clear provisioned throughput for PAY_PER_REQUEST billing mode.
+		input.GlobalSecondaryIndexUpdates[0].Create.ProvisionedThroughput = nil
 	}
 
 	_, err = p.c.UpdateTable(&input)

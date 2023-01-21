@@ -1,4 +1,7 @@
 dynamo:
+  environment:
+    AWS_ACCESS_KEY_ID: 'local_id'
+    AWS_SECRET_ACCESS_KEY: 'local_secret'
   image: amazon/dynamodb-local
   ports:
   - 8000:8000
