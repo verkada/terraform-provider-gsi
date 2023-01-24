@@ -6,7 +6,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
-
 func createTable(c *dynamodb.DynamoDB, tn string, attributes map[string]string, keys map[string]string) error {
 	return createTableWithMode(c, tn, attributes, keys, dynamodb.BillingModeProvisioned)
 }
@@ -39,14 +38,13 @@ func createTableWithMode(c *dynamodb.DynamoDB, tn string, attributes map[string]
 		AttributeDefinitions: attributeDefinitions,
 		KeySchema:            keySchema,
 		BillingMode:          &mode,
-		ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
-			ReadCapacityUnits:  aws.Int64(10),
-			WriteCapacityUnits: aws.Int64(10),
-		},
 	}
 
-	if mode == dynamodb.BillingModePayPerRequest {
-		args.ProvisionedThroughput = nil
+	if mode == dynamodb.BillingModeProvisioned {
+		args.ProvisionedThroughput = &dynamodb.ProvisionedThroughput{
+			ReadCapacityUnits:  aws.Int64(10),
+			WriteCapacityUnits: aws.Int64(10),
+		}
 	}
 
 	if _, err := c.CreateTable(&args); err != nil {

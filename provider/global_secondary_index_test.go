@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"testing"
 	"time"
 
@@ -103,7 +104,7 @@ func testAccPreCheck(t *testing.T, c *dynamodb.DynamoDB, tn string, attributes m
 	}
 }
 
-func TestAccCreateBasic(t *testing.T) {
+func TestAccCreateProvisionedBasic(t *testing.T) {
 	c, err := newTestClient()
 	if err != nil {
 		t.Fatal("Could not create dynamodb client", err)
@@ -133,14 +134,16 @@ resource "gsi_global_secondary_index" "gsi" {
 	projection_type = "KEYS_ONLY"
 }`,
 				Check: resource.ComposeTestCheckFunc(
+					waitDynamoGSIActiveCheck(c, "test_table", "basic_index"),
 					testAccCheckGSIGlobalSecondaryIndexExists("gsi", "test_table", "basic_index"),
 					testAccCheckGSIGlobalSecondaryIndexValues(c, "test_table", "basic_index", "p", "r", "KEYS_ONLY"),
-				)},
+				),
+			},
 		},
 	})
 }
 
-func TestAccCreateBasicPayPerRequest(t *testing.T) {
+func TestAccCreatePayPerRequestBasic(t *testing.T) {
 	c, err := newTestClient()
 	if err != nil {
 		t.Fatal("Could not create dynamodb client", err)
@@ -161,8 +164,6 @@ func TestAccCreateBasicPayPerRequest(t *testing.T) {
 resource "gsi_global_secondary_index" "gsi" {
 	name            = "basic_index"
 	table_name      = "test_table"
-	read_capacity   = 5
-	write_capacity  = 5
 	hash_key        = "p"
 	hash_key_type   = "S"
 	range_key       = "r"
@@ -171,9 +172,75 @@ resource "gsi_global_secondary_index" "gsi" {
 	projection_type = "KEYS_ONLY"
 }`,
 				Check: resource.ComposeTestCheckFunc(
+					waitDynamoGSIActiveCheck(c, "test_table", "basic_index"),
 					testAccCheckGSIGlobalSecondaryIndexExists("gsi", "test_table", "basic_index"),
 					testAccCheckGSIGlobalSecondaryIndexValues(c, "test_table", "basic_index", "p", "r", "KEYS_ONLY"),
-				)},
+				),
+			},
+		},
+	})
+}
+
+func TestAccInvalidBillingModeScalingParams(t *testing.T) {
+	c, err := newTestClient()
+	if err != nil {
+		t.Fatal("Could not create dynamodb client", err)
+		return
+	}
+
+	if err := createTableWithMode(c, "test_table", map[string]string{"p": "S"}, map[string]string{"p": "HASH"}, dynamodb.BillingModePayPerRequest); err != nil {
+		t.Fatal("Failed to create test table", err)
+	}
+
+	resource.Test(t, resource.TestCase{
+		Providers: map[string]*schema.Provider{
+			"gsi": providerWithConfigure(testProviderConfigure(false)),
+		},
+		Steps: []resource.TestStep{
+			{
+				Config: `
+resource "gsi_global_secondary_index" "gsi" {
+	name            = "basic_index"
+	table_name      = "test_table"
+	hash_key        = "p"
+	hash_key_type   = "S"
+	range_key       = "r"
+	range_key_type  = "N"
+	read_capacity   = 10
+	billing_mode    = "PAY_PER_REQUEST"
+	projection_type = "KEYS_ONLY"
+}`,
+				ExpectError: regexp.MustCompile("read_capacity / write_capacity must not be set for billing_mode = PAY_PER_REQUEST"),
+			},
+			{
+				Config: `
+resource "gsi_global_secondary_index" "gsi" {
+	name                = "basic_index"
+	table_name          = "test_table"
+	hash_key            = "p"
+	hash_key_type       = "S"
+	range_key           = "r"
+	range_key_type      = "N"
+	autoscaling_enabled = true
+	billing_mode        = "PAY_PER_REQUEST"
+	projection_type     = "KEYS_ONLY"
+}`,
+				ExpectError: regexp.MustCompile("autoscaling cannot be enabled with billing_mode = PAY_PER_REQUEST"),
+			},
+			{
+				Config: `
+resource "gsi_global_secondary_index" "gsi" {
+	name                = "basic_index"
+	table_name          = "test_table"
+	hash_key            = "p"
+	hash_key_type       = "S"
+	range_key           = "r"
+	range_key_type      = "N"
+	billing_mode        = "PROVISIONED"
+	projection_type     = "KEYS_ONLY"
+}`,
+				ExpectError: regexp.MustCompile("read_capacity / write_capacity must be set to a value >= 1 for billing_mode = PROVISIONED"),
+			},
 		},
 	})
 }
@@ -209,6 +276,7 @@ resource "gsi_global_secondary_index" "gsi" {
 	autoscaling_enabled = true
 }`,
 				Check: resource.ComposeTestCheckFunc(
+					waitDynamoGSIActiveCheck(c, "test_table", "basic_index"),
 					testAccCheckGSIGlobalSecondaryIndexExists("gsi", "test_table", "basic_index"),
 					testAccCheckGSIGlobalSecondaryIndexValues(c, "test_table", "basic_index", "p", "r", "KEYS_ONLY"),
 				),
@@ -446,5 +514,27 @@ func testAccCheckGSIGlobalSecondaryIndexExists(rn, tn, in string) resource.TestC
 		}
 
 		return nil
+	}
+}
+
+// Waits for the index to be ready before running validation.
+// Test cleanup could happen before the index is fully created
+func waitDynamoGSIActiveCheck(c *dynamodb.DynamoDB, tn, in string) resource.TestCheckFunc {
+	return func(_ *terraform.State) error {
+		stateConf := &resource.StateChangeConf{
+			Pending: []string{
+				dynamodb.IndexStatusCreating,
+				dynamodb.IndexStatusUpdating,
+			},
+			Target: []string{
+				dynamodb.IndexStatusActive,
+			},
+			Timeout: createGSITimeout,
+			Refresh: statusDynamoDBGSI(c, tn, in),
+		}
+
+		_, err := stateConf.WaitForState()
+
+		return err
 	}
 }
