@@ -374,7 +374,7 @@ func dynamoDBGSIUpdate(d *schema.ResourceData, m interface{}) error {
 		return err
 	}
 
-	if d.HasChange("autoscaling_enabled") && !d.Get("autoscaling_enabled").(bool) && d.Get("billing_mode") == dynamodb.BillingModeProvisioned {
+	if !d.Get("autoscaling_enabled").(bool) && d.Get("billing_mode") == dynamodb.BillingModeProvisioned {
 		update := &dynamodb.UpdateGlobalSecondaryIndexAction{
 			IndexName:             aws.String(in),
 			ProvisionedThroughput: &dynamodb.ProvisionedThroughput{},
