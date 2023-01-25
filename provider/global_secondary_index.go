@@ -231,7 +231,7 @@ func dynamoDBGSICreate(d *schema.ResourceData, m interface{}) error {
 		return err
 	}
 
-	if !d.Get("autoscaling_enabled").(bool) {
+	if d.Get("autoscaling_enabled").(bool) {
 		// Don't persist the capacity in the state if it is managed by an autoscaler.
 		d.Set("read_capacity", nil)
 		d.Set("write_capacity", nil)
