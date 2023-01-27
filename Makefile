@@ -6,13 +6,13 @@ BINARY=terraform-provider-${NAME}
 VERSION=0.1
 OS_ARCH=$(shell go env GOHOSTOS)_$(shell go env GOHOSTARCH)
 ifeq ($(AWS_DYNAMODB_ENDPOINT),)
-export AWS_DYNAMODB_ENDPOINT:=http://localhost:8000/
+AWS_DYNAMODB_ENDPOINT:=http://localhost:8000/
 endif
 ifeq ($(AWS_ACCESS_KEY_ID),)
-export AWS_ACCESS_KEY_ID=local_id
+AWS_ACCESS_KEY_ID=local_id
 endif
 ifeq ($(AWS_SECRET_ACCESS_KEY),)
-export AWS_SECRET_ACCESS_KEY:=local_secret
+AWS_SECRET_ACCESS_KEY:=local_secret
 endif
 
 default: install

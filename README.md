@@ -61,8 +61,7 @@ make testacc
 ```
 
 ## Run unit tests
+
 ```shell
 make test
 ```
-
-Important: Must set `TF_ACC=<non-empty-value>` environment variable to get TF tests to run.
