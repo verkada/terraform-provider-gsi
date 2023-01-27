@@ -79,23 +79,30 @@ func dynamoDBGSIResource() *schema.Resource {
 				ForceNew:    true,
 				Description: "Type of the range key.",
 			},
+			"billing_mode": {
+				Type:         schema.TypeString,
+				Optional:     true,
+				ValidateFunc: stringInSlice(dynamodb.BillingMode_Values(), false),
+				Default:      dynamodb.BillingModeProvisioned,
+				Description:  "The billing mode to apply to this index. Should match the associated table",
+			},
 			"read_capacity": {
 				Type:        schema.TypeInt,
-				Required:    true,
+				Optional:    true,
 				Description: "Read capacity for the index, untracked after creation if autoscaling is enabled.",
 				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
 					return old != "" && d.Get("autoscaling_enabled").(bool)
 				},
-				ValidateFunc: validation.IntAtLeast(1),
+				ValidateFunc: validation.IntAtLeast(0),
 			},
 			"write_capacity": {
 				Type:        schema.TypeInt,
-				Required:    true,
+				Optional:    true,
 				Description: "Write capacity for the table, untracked after creation if autoscaling is enabled.",
 				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
 					return old != "" && d.Get("autoscaling_enabled").(bool)
 				},
-				ValidateFunc: validation.IntAtLeast(1),
+				ValidateFunc: validation.IntAtLeast(0),
 			},
 			"autoscaling_enabled": {
 				Type:        schema.TypeBool,
@@ -190,6 +197,10 @@ func dynamoDBGSICreate(d *schema.ResourceData, m interface{}) error {
 		}
 	}
 
+	if err = validateBillingMode(d); err != nil {
+		return err
+	}
+
 	input := dynamodb.UpdateTableInput{
 		TableName:            aws.String(tn),
 		AttributeDefinitions: ad,
@@ -199,13 +210,16 @@ func dynamoDBGSICreate(d *schema.ResourceData, m interface{}) error {
 					IndexName:  aws.String(in),
 					KeySchema:  keySchema,
 					Projection: projection,
-					ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
-						ReadCapacityUnits:  aws.Int64(int64(d.Get("read_capacity").(int))),
-						WriteCapacityUnits: aws.Int64(int64(d.Get("write_capacity").(int))),
-					},
 				},
 			},
 		},
+	}
+
+	if d.Get("billing_mode") == dynamodb.BillingModeProvisioned {
+		input.GlobalSecondaryIndexUpdates[0].Create.ProvisionedThroughput = &dynamodb.ProvisionedThroughput{
+			ReadCapacityUnits:  aws.Int64(int64(d.Get("read_capacity").(int))),
+			WriteCapacityUnits: aws.Int64(int64(d.Get("write_capacity").(int))),
+		}
 	}
 
 	_, err = p.c.UpdateTable(&input)
@@ -217,7 +231,7 @@ func dynamoDBGSICreate(d *schema.ResourceData, m interface{}) error {
 		return err
 	}
 
-	if !d.Get("autoscaling_enabled").(bool) {
+	if d.Get("autoscaling_enabled").(bool) {
 		// Don't persist the capacity in the state if it is managed by an autoscaler.
 		d.Set("read_capacity", nil)
 		d.Set("write_capacity", nil)
@@ -226,6 +240,24 @@ func dynamoDBGSICreate(d *schema.ResourceData, m interface{}) error {
 	d.SetId(fmt.Sprintf("%s:%s", tn, in))
 
 	return dynamoDBGSIRead(d, m)
+}
+
+func validateBillingMode(d *schema.ResourceData) error {
+	readCapacity := d.Get("read_capacity").(int)
+	writCapacity := d.Get("write_capacity").(int)
+	switch d.Get("billing_mode") {
+	case dynamodb.BillingModePayPerRequest:
+		if readCapacity != 0 || writCapacity != 0 {
+			return errors.New("read_capacity / write_capacity must not be set for billing_mode = PAY_PER_REQUEST")
+		} else if d.Get("autoscaling_enabled").(bool) {
+			return errors.New("autoscaling cannot be enabled with billing_mode = PAY_PER_REQUEST")
+		}
+	case dynamodb.BillingModeProvisioned:
+		if readCapacity == 0 || writCapacity == 0 {
+			return errors.New("read_capacity / write_capacity must be set to a value >= 1 for billing_mode = PROVISIONED")
+		}
+	}
+	return nil
 }
 
 func getAttributeDefinition(c *dynamodb.DynamoDB, tn string) ([]*dynamodb.AttributeDefinition, error) {
@@ -338,7 +370,11 @@ func dynamoDBGSIUpdate(d *schema.ResourceData, m interface{}) error {
 		return err
 	}
 
-	if d.HasChange("autoscaling_enabled") && !d.Get("autoscaling_enabled").(bool) {
+	if err = validateBillingMode(d); err != nil {
+		return err
+	}
+
+	if !d.Get("autoscaling_enabled").(bool) && d.Get("billing_mode") == dynamodb.BillingModeProvisioned {
 		update := &dynamodb.UpdateGlobalSecondaryIndexAction{
 			IndexName:             aws.String(in),
 			ProvisionedThroughput: &dynamodb.ProvisionedThroughput{},
