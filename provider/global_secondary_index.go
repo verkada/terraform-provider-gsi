@@ -154,11 +154,11 @@ func dynamoDBGSICreate(d *schema.ResourceData, m interface{}) error {
 			AttributeType: aws.String(hType.(string)),
 		})
 	} else if rhType != hType {
-		return errors.New("Hash key type does not match the existing definition on the table")
+		return errors.New("hash key type does not match the existing definition on the table")
 	}
 
 	keySchema := []*dynamodb.KeySchemaElement{
-		&dynamodb.KeySchemaElement{
+		{
 			AttributeName: aws.String(d.Get("hash_key").(string)),
 			KeyType:       aws.String(dynamodb.KeyTypeHash),
 		},
@@ -167,7 +167,7 @@ func dynamoDBGSICreate(d *schema.ResourceData, m interface{}) error {
 	if r, ok := d.GetOk("range_key"); ok {
 		rType, e := d.GetOkExists("range_key_type")
 		if !e {
-			return errors.New("Missing range_key_type")
+			return errors.New("missing range_key_type")
 		}
 		rrType := getAttributeType(ad, aws.String(r.(string)))
 		if rrType == "" {
@@ -176,7 +176,7 @@ func dynamoDBGSICreate(d *schema.ResourceData, m interface{}) error {
 				AttributeType: aws.String(rType.(string)),
 			})
 		} else if rType != rrType {
-			return errors.New("Range key type does not match the existing definition on the table")
+			return errors.New("range key type does not match the existing definition on the table")
 		}
 
 		keySchema = append(keySchema, &dynamodb.KeySchemaElement{
@@ -205,7 +205,7 @@ func dynamoDBGSICreate(d *schema.ResourceData, m interface{}) error {
 		TableName:            aws.String(tn),
 		AttributeDefinitions: ad,
 		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
-			&dynamodb.GlobalSecondaryIndexUpdate{
+			{
 				Create: &dynamodb.CreateGlobalSecondaryIndexAction{
 					IndexName:  aws.String(in),
 					KeySchema:  keySchema,
@@ -275,7 +275,7 @@ func idToNames(id string) (string, string, error) {
 	// Convert the GSI name to (table_name, index_name).
 	splits := strings.SplitN(id, ":", 2)
 	if len(splits) != 2 {
-		return "", "", fmt.Errorf("Invalid DynamoDB GSI ID (%s)", id)
+		return "", "", fmt.Errorf("invalid DynamoDB GSI ID (%s)", id)
 	}
 	return splits[0], splits[1], nil
 }
@@ -335,7 +335,7 @@ func readGSI(d *schema.ResourceData, c *dynamodb.DynamoDB, tn string, in string)
 	for _, attribute := range i.KeySchema {
 		attrType := getAttributeType(t.AttributeDefinitions, attribute.AttributeName)
 		if attrType == "" {
-			return true, fmt.Errorf("Attribute %s not defined on table", *attribute.AttributeName)
+			return true, fmt.Errorf("attribute %s not defined on table", *attribute.AttributeName)
 		}
 
 		if aws.StringValue(attribute.KeyType) == dynamodb.KeyTypeHash {
@@ -381,7 +381,7 @@ func dynamoDBGSIUpdate(d *schema.ResourceData, m interface{}) error {
 		}
 
 		changed := false
-		if d.HasChange("read_capaciity") {
+		if d.HasChange("read_capacity") {
 			changed = true
 			update.ProvisionedThroughput.ReadCapacityUnits = aws.Int64(int64(d.Get("read_capacity").(int)))
 		}
@@ -394,7 +394,7 @@ func dynamoDBGSIUpdate(d *schema.ResourceData, m interface{}) error {
 			if _, err := c.UpdateTable(&dynamodb.UpdateTableInput{
 				TableName: aws.String(tn),
 				GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
-					&dynamodb.GlobalSecondaryIndexUpdate{
+					{
 						Update: update,
 					},
 				},
@@ -423,7 +423,7 @@ func dynamoDBGSIDelete(d *schema.ResourceData, m interface{}) error {
 	_, err = c.UpdateTable(&dynamodb.UpdateTableInput{
 		TableName: aws.String(tn),
 		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
-			&dynamodb.GlobalSecondaryIndexUpdate{
+			{
 				Delete: &dynamodb.DeleteGlobalSecondaryIndexAction{
 					IndexName: aws.String(in),
 				},
