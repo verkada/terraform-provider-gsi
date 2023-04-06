@@ -1,7 +1,14 @@
-## 0.3.0 (Unreleased)
+## 0.4.0 (April 6, 2023)
+
+ENHANCEMENTS
+
+* Support assume_role in provider configuration
+
+## 0.3.0
 
 ENHANCEMENTS:
 
+* Support PAY_PER_REQUEST GSI
 
 BUG FIXES:
 

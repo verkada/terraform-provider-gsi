@@ -67,7 +67,7 @@ func testProviderConfigure(autoImport bool) schema.ConfigureFunc {
 		region := d.Get("region").(string)
 		endpoint := d.Get("dynamodb_endpoint").(string)
 
-		c, err := newClient(region, accessKey, secretKey, token, profile, endpoint)
+		c, err := newClient(region, accessKey, secretKey, token, profile, endpoint, "")
 		if err != nil {
 			return nil, err
 		}
