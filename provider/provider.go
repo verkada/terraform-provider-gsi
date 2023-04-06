@@ -5,6 +5,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/endpoints"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
@@ -70,6 +71,21 @@ func providerWithConfigure(cfgFn schema.ConfigureFunc) *schema.Provider {
 				DefaultFunc: schema.EnvDefaultFunc("AWS_DYNAMODB_ENDPOINT", nil),
 				Description: "AWS dynamodb endpoint",
 			},
+
+			"assume_role": &schema.Schema{
+				Type:     schema.TypeList,
+				Optional: true,
+				MaxItems: 1,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"role_arn": {
+							Type:        schema.TypeString,
+							Optional:    true,
+							Description: "Amazon Resource Name (ARN) of an IAM Role to assume prior to making API calls.",
+						},
+					},
+				},
+			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
 			"gsi_global_secondary_index": dynamoDBGSIResource(),
@@ -82,11 +98,9 @@ func Provider() *schema.Provider {
 	return providerWithConfigure(providerConfigure)
 }
 
-func newClient(region string, accessKey string, secretKey string, token string, profile string, endpoint string) (*dynamodb.DynamoDB, error) {
+func newClient(region string, accessKey string, secretKey string, token string, profile string, endpoint string, role_arn string) (*dynamodb.DynamoDB, error) {
 	options := session.Options{}
-	options.Config = aws.Config{
-		Region: aws.String(region),
-	}
+	options.Config = *aws.NewConfig().WithRegion(region)
 	if accessKey != "" && secretKey != "" {
 		options.Config.Credentials = credentials.NewStaticCredentials(accessKey, secretKey, token)
 	} else if profile != "" {
@@ -113,6 +127,15 @@ func newClient(region string, accessKey string, secretKey string, token string, 
 		return nil, err
 	}
 
+	if role_arn != "" {
+		// Assume the role and use the resulting credentials.
+		options.Config.Credentials = stscreds.NewCredentials(sess, role_arn)
+		sess, err = session.NewSessionWithOptions(options)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return dynamodb.New(sess), nil
 }
 
@@ -123,8 +146,17 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 	profile := d.Get("profile").(string)
 	region := d.Get("region").(string)
 	endpoint := d.Get("dynamodb_endpoint").(string)
+	assume_role_config := d.Get("assume_role").([]interface{})
 
-	c, err := newClient(region, accessKey, secretKey, token, profile, endpoint)
+	role_arn := ""
+	if len(assume_role_config) > 0 {
+		configmap := assume_role_config[0].(map[string]interface{})
+		if v, ok := configmap["role_arn"].(string); ok && v != "" {
+			role_arn = v
+		}
+	}
+
+	c, err := newClient(region, accessKey, secretKey, token, profile, endpoint, role_arn)
 	if err != nil {
 		return nil, err
 	}

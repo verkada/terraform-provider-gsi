@@ -28,7 +28,7 @@ func newTestClient() (*dynamodb.DynamoDB, error) {
 	}
 	endpoint := os.Getenv("AWS_DYNAMODB_ENDPOINT")
 
-	return newClient(region, accessKey, secretKey, token, profile, endpoint)
+	return newClient(region, accessKey, secretKey, token, profile, endpoint, "")
 }
 
 func statusDynamoDBTable(c *dynamodb.DynamoDB, tn string) resource.StateRefreshFunc {
