@@ -323,6 +323,8 @@ func readGSI(d *schema.ResourceData, c *dynamodb.DynamoDB, tn string, in string)
 	}
 
 	d.Set("arn", i.IndexArn)
+	d.Set("name", i.IndexName)
+	d.Set("table_name", t.TableName)
 
 	// Since readGSI can be used on an import on create, we need to erase the optional values from the
 	// state or we will end up with writing a state that is the expected one rather than the applied one
