@@ -28,7 +28,7 @@ func newTestClient() (*dynamodb.DynamoDB, error) {
 	}
 	endpoint := os.Getenv("AWS_DYNAMODB_ENDPOINT")
 
-	return newClient(region, accessKey, secretKey, token, profile, endpoint, "")
+	return newClient(region, accessKey, secretKey, token, profile, endpoint, "", true)
 }
 
 func statusDynamoDBTable(c *dynamodb.DynamoDB, tn string) resource.StateRefreshFunc {
@@ -368,7 +368,7 @@ func TestAccAutoImport(t *testing.T) {
 			},
 		},
 		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
-			&dynamodb.GlobalSecondaryIndexUpdate{
+			{
 				Create: &dynamodb.CreateGlobalSecondaryIndexAction{
 					IndexName: aws.String("basic_index"),
 					KeySchema: []*dynamodb.KeySchemaElement{
@@ -436,7 +436,7 @@ func simulateAutoscaling(c *dynamodb.DynamoDB, tn, in string, rc, wc int64) func
 		input := dynamodb.UpdateTableInput{
 			TableName: aws.String(tn),
 			GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
-				&dynamodb.GlobalSecondaryIndexUpdate{
+				{
 					Update: &dynamodb.UpdateGlobalSecondaryIndexAction{
 						IndexName: aws.String(in),
 						ProvisionedThroughput: &dynamodb.ProvisionedThroughput{

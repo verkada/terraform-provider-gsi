@@ -72,7 +72,7 @@ func providerWithConfigure(cfgFn schema.ConfigureFunc) *schema.Provider {
 				Description: "AWS dynamodb endpoint",
 			},
 
-			"assume_role": &schema.Schema{
+			"assume_role": {
 				Type:     schema.TypeList,
 				Optional: true,
 				MaxItems: 1,
@@ -86,6 +86,13 @@ func providerWithConfigure(cfgFn schema.ConfigureFunc) *schema.Provider {
 					},
 				},
 			},
+
+			"validate": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     true,
+				Description: "Validate AWS credentials passed to the provider. Consider setting false if using an IAM role or EC2 instance profile.",
+			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
 			"gsi_global_secondary_index": dynamoDBGSIResource(),
@@ -98,7 +105,7 @@ func Provider() *schema.Provider {
 	return providerWithConfigure(providerConfigure)
 }
 
-func newClient(region string, accessKey string, secretKey string, token string, profile string, endpoint string, role_arn string) (*dynamodb.DynamoDB, error) {
+func newClient(region string, accessKey string, secretKey string, token string, profile string, endpoint string, role_arn string, validate bool) (*dynamodb.DynamoDB, error) {
 	options := session.Options{}
 	options.Config = *aws.NewConfig().WithRegion(region)
 	if accessKey != "" && secretKey != "" {
@@ -106,7 +113,7 @@ func newClient(region string, accessKey string, secretKey string, token string, 
 	} else if profile != "" {
 		options.SharedConfigState = session.SharedConfigEnable
 		options.Profile = profile
-	} else {
+	} else if validate {
 		return nil, errors.New("no credentials for AWS")
 	}
 
@@ -147,6 +154,7 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 	region := d.Get("region").(string)
 	endpoint := d.Get("dynamodb_endpoint").(string)
 	assume_role_config := d.Get("assume_role").([]interface{})
+	validate := d.Get("validate").(bool)
 
 	role_arn := ""
 	if len(assume_role_config) > 0 {
@@ -156,7 +164,7 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 		}
 	}
 
-	c, err := newClient(region, accessKey, secretKey, token, profile, endpoint, role_arn)
+	c, err := newClient(region, accessKey, secretKey, token, profile, endpoint, role_arn, validate)
 	if err != nil {
 		return nil, err
 	}
