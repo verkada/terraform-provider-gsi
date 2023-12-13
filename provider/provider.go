@@ -153,13 +153,12 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 	profile := d.Get("profile").(string)
 	region := d.Get("region").(string)
 	endpoint := d.Get("dynamodb_endpoint").(string)
-	assume_role_config := d.Get("assume_role").([]interface{})
+	assume_role_config := d.Get("assume_role").(map[string]interface{})
 	validate := d.Get("validate").(bool)
 
 	role_arn := ""
 	if len(assume_role_config) > 0 {
-		configmap := assume_role_config[0].(map[string]interface{})
-		if v, ok := configmap["role_arn"].(string); ok && v != "" {
+		if v, ok := assume_role_config["role_arn"].(string); ok && v != "" {
 			role_arn = v
 		}
 	}
