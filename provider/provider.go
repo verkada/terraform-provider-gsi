@@ -157,7 +157,7 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 	validate := d.Get("validate").(bool)
 
 	role_arn := ""
-	if len(assume_role_config) > 0 {
+	if len(assume_role_config) > 0 && assume_role_config[0] != nil {
 		configmap := assume_role_config[0].(map[string]interface{})
 		if v, ok := configmap["role_arn"].(string); ok && v != "" {
 			role_arn = v
