@@ -3,7 +3,7 @@ module terraform-provider-gsi
 go 1.17
 
 require (
-	github.com/aws/aws-sdk-go v1.44.184
+	github.com/aws/aws-sdk-go v1.55.6
 	github.com/hashicorp/terraform-plugin-sdk/v2 v2.8.0
 )
 
