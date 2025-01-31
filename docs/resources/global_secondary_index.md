@@ -17,25 +17,23 @@ description: |-
 
 ### Required
 
-- **hash_key** (String) Hash key of the index.
-- **hash_key_type** (String) Type of the hash key.
-- **name** (String) Name of the index.
-- **projection_type** (String) Projection type.
-- **table_name** (String) Name of the DynamoDB table to which the GSI is associated..
+- `hash_key` (String) Hash key of the index.
+- `hash_key_type` (String) Type of the hash key.
+- `name` (String) Name of the index.
+- `projection_type` (String) Projection type.
+- `table_name` (String) Name of the DynamoDB table to which the GSI is associated..
 
 ### Optional
 
-- **autoscaling_enabled** (Boolean) Whether capacity is controlled by an autoscaler.
-- **billing_mode** (String) The billing mode to apply to this index. Should match the associated table
-- **non_key_attributes** (Set of String) Additional attributes to include based in the projection.
-- **range_key** (String) Range key of the index.
-- **range_key_type** (String) Type of the range key.
-- **read_capacity** (Number) Read capacity for the index, untracked after creation if autoscaling is enabled.
-- **write_capacity** (Number) Write capacity for the table, untracked after creation if autoscaling is enabled.
+- `autoscaling_enabled` (Boolean) Whether capacity is controlled by an autoscaler.
+- `billing_mode` (String) The billing mode to apply to this index. Should match the associated table
+- `non_key_attributes` (Set of String) Additional attributes to include based in the projection.
+- `range_key` (String) Range key of the index.
+- `range_key_type` (String) Type of the range key.
+- `read_capacity` (Number) Read capacity for the index, untracked after creation if autoscaling is enabled.
+- `write_capacity` (Number) Write capacity for the table, untracked after creation if autoscaling is enabled.
 
 ### Read-Only
 
-- **arn** (String) ARN of the Global Secondary Index.
-- **id** (String) The ID of this resource.
-
-
+- `arn` (String) ARN of the Global Secondary Index.
+- `id` (String) The ID of this resource.
