@@ -17,10 +17,19 @@ description: |-
 
 ### Optional
 
-- **access_key** (String) AWS access key ID
-- **auto_import** (Boolean) Automatically import on create, not recommended unless transitioning away from GSI created with the AWS resource
-- **dynamodb_endpoint** (String) AWS dynamodb endpoint
-- **profile** (String) AWS profile
-- **region** (String) AWS region
-- **secret_key** (String) AWS secret key ID
-- **token** (String) AWS session token
+- `access_key` (String) AWS access key ID
+- `assume_role` (Block List, Max: 1) (see [below for nested schema](#nestedblock--assume_role))
+- `auto_import` (Boolean) Automatically import on create, not recommended unless transitioning away from GSI created with the AWS resource
+- `dynamodb_endpoint` (String) AWS dynamodb endpoint
+- `profile` (String) AWS profile
+- `region` (String) AWS region
+- `secret_key` (String) AWS secret key ID
+- `token` (String) AWS session token
+- `validate` (Boolean) Validate AWS credentials passed to the provider. Consider setting false if using an IAM role or EC2 instance profile.
+
+<a id="nestedblock--assume_role"></a>
+### Nested Schema for `assume_role`
+
+Optional:
+
+- `role_arn` (String) Amazon Resource Name (ARN) of an IAM Role to assume prior to making API calls.
