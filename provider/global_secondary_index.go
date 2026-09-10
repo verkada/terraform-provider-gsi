@@ -222,7 +222,10 @@ func dynamoDBGSICreate(d *schema.ResourceData, m interface{}) error {
 		}
 	}
 
-	_, err = p.c.UpdateTable(&input)
+	err = retryOnConcurrentTableUpdate(createGSITimeout, func() error {
+		_, err := p.c.UpdateTable(&input)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("error creating DynamoDB GSI (%s) on table %s: %w", in, tn, err)
 	}
@@ -393,15 +396,18 @@ func dynamoDBGSIUpdate(d *schema.ResourceData, m interface{}) error {
 		}
 
 		if changed {
-			if _, err := c.UpdateTable(&dynamodb.UpdateTableInput{
-				TableName: aws.String(tn),
-				GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
-					{
-						Update: update,
+			if err := retryOnConcurrentTableUpdate(updateGSITimeout, func() error {
+				_, err := c.UpdateTable(&dynamodb.UpdateTableInput{
+					TableName: aws.String(tn),
+					GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
+						{
+							Update: update,
+						},
 					},
-				},
-			}); err != nil {
+				})
 				return err
+			}); err != nil {
+				return fmt.Errorf("error updating DynamoDB GSI (%s) on table %s: %w", in, tn, err)
 			}
 
 			if err := waitDynamoDBGSIActive(c, tn, in); err != nil {
@@ -422,22 +428,25 @@ func dynamoDBGSIDelete(d *schema.ResourceData, m interface{}) error {
 
 	log.Printf("[DEBUG] Deleting Dynamodb Table GSI %s on table %s", in, tn)
 
-	_, err = c.UpdateTable(&dynamodb.UpdateTableInput{
-		TableName: aws.String(tn),
-		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
-			{
-				Delete: &dynamodb.DeleteGlobalSecondaryIndexAction{
-					IndexName: aws.String(in),
+	err = retryOnConcurrentTableUpdate(deleteGSITimeout, func() error {
+		_, err := c.UpdateTable(&dynamodb.UpdateTableInput{
+			TableName: aws.String(tn),
+			GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
+				{
+					Delete: &dynamodb.DeleteGlobalSecondaryIndexAction{
+						IndexName: aws.String(in),
+					},
 				},
 			},
-		},
+		})
+		return err
 	})
 
 	if err != nil {
 		if aerr, ok := err.(awserr.Error); ok && aerr.Code() == dynamodb.ErrCodeResourceNotFoundException {
 			return fmt.Errorf("dynamodb table %s or index %s does not exist", tn, in)
 		}
-		return fmt.Errorf("failed to delete GSI %s", in)
+		return fmt.Errorf("failed to delete GSI %s on table %s: %w", in, tn, err)
 	}
 
 	if err := waitDynamoDBGSIDeleted(c, tn, in); err != nil {
@@ -445,6 +454,29 @@ func dynamoDBGSIDelete(d *schema.ResourceData, m interface{}) error {
 	}
 
 	return nil
+}
+
+// DynamoDB allows only one index operation per table at a time, so concurrent
+// operations on sibling indexes of the same table are rejected outright rather
+// than queued. Terraform plans those siblings as independent resources and
+// applies them in parallel, so callers must absorb the rejection themselves.
+func retryOnConcurrentTableUpdate(timeout time.Duration, fn func() error) error {
+	return resource.Retry(timeout, func() *resource.RetryError {
+		err := fn()
+		if err == nil {
+			return nil
+		}
+
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			case dynamodb.ErrCodeResourceInUseException, dynamodb.ErrCodeLimitExceededException:
+				log.Printf("[DEBUG] Table busy with another index operation, retrying: %s", err)
+				return resource.RetryableError(err)
+			}
+		}
+
+		return resource.NonRetryableError(err)
+	})
 }
 
 func describeGSI(c *dynamodb.DynamoDB, tn string, in string) (*dynamodb.TableDescription, *dynamodb.GlobalSecondaryIndexDescription, error) {
