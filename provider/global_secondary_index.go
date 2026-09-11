@@ -4,12 +4,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/cenkalti/backoff/v4"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
@@ -222,7 +225,16 @@ func dynamoDBGSICreate(d *schema.ResourceData, m interface{}) error {
 		}
 	}
 
-	_, err = p.c.UpdateTable(&input)
+	unlock, err := lockTable(tn, createGSITimeout)
+	if err != nil {
+		return fmt.Errorf("error creating DynamoDB GSI (%s) on table %s: %w", in, tn, err)
+	}
+	defer unlock()
+
+	err = retryOnConcurrentTableUpdate(createGSITimeout, func() error {
+		_, err := p.c.UpdateTable(&input)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("error creating DynamoDB GSI (%s) on table %s: %w", in, tn, err)
 	}
@@ -393,15 +405,24 @@ func dynamoDBGSIUpdate(d *schema.ResourceData, m interface{}) error {
 		}
 
 		if changed {
-			if _, err := c.UpdateTable(&dynamodb.UpdateTableInput{
-				TableName: aws.String(tn),
-				GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
-					{
-						Update: update,
+			unlock, err := lockTable(tn, updateGSITimeout)
+			if err != nil {
+				return fmt.Errorf("error updating DynamoDB GSI (%s) on table %s: %w", in, tn, err)
+			}
+			defer unlock()
+
+			if err := retryOnConcurrentTableUpdate(updateGSITimeout, func() error {
+				_, err := c.UpdateTable(&dynamodb.UpdateTableInput{
+					TableName: aws.String(tn),
+					GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
+						{
+							Update: update,
+						},
 					},
-				},
-			}); err != nil {
+				})
 				return err
+			}); err != nil {
+				return fmt.Errorf("error updating DynamoDB GSI (%s) on table %s: %w", in, tn, err)
 			}
 
 			if err := waitDynamoDBGSIActive(c, tn, in); err != nil {
@@ -422,22 +443,31 @@ func dynamoDBGSIDelete(d *schema.ResourceData, m interface{}) error {
 
 	log.Printf("[DEBUG] Deleting Dynamodb Table GSI %s on table %s", in, tn)
 
-	_, err = c.UpdateTable(&dynamodb.UpdateTableInput{
-		TableName: aws.String(tn),
-		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
-			{
-				Delete: &dynamodb.DeleteGlobalSecondaryIndexAction{
-					IndexName: aws.String(in),
+	unlock, err := lockTable(tn, deleteGSITimeout)
+	if err != nil {
+		return fmt.Errorf("failed to delete GSI %s on table %s: %w", in, tn, err)
+	}
+	defer unlock()
+
+	err = retryOnConcurrentTableUpdate(deleteGSITimeout, func() error {
+		_, err := c.UpdateTable(&dynamodb.UpdateTableInput{
+			TableName: aws.String(tn),
+			GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
+				{
+					Delete: &dynamodb.DeleteGlobalSecondaryIndexAction{
+						IndexName: aws.String(in),
+					},
 				},
 			},
-		},
+		})
+		return err
 	})
 
 	if err != nil {
 		if aerr, ok := err.(awserr.Error); ok && aerr.Code() == dynamodb.ErrCodeResourceNotFoundException {
 			return fmt.Errorf("dynamodb table %s or index %s does not exist", tn, in)
 		}
-		return fmt.Errorf("failed to delete GSI %s", in)
+		return fmt.Errorf("failed to delete GSI %s on table %s: %w", in, tn, err)
 	}
 
 	if err := waitDynamoDBGSIDeleted(c, tn, in); err != nil {
@@ -445,6 +475,98 @@ func dynamoDBGSIDelete(d *schema.ResourceData, m interface{}) error {
 	}
 
 	return nil
+}
+
+// DynamoDB allows only one index operation per table at a time, so an operation
+// on a sibling index of the same table is rejected outright rather than queued.
+// Terraform plans those siblings as independent resources and applies them in
+// parallel, so the provider serializes them itself.
+//
+// tableLocks covers this process only, which is where Terraform's own
+// parallelism lives. Concurrent runs against the same table still race, so the
+// mutation itself is additionally retried.
+var tableLocks sync.Map
+
+// The lock is held until the table settles, not just until the API call
+// returns, because the table remains busy for the duration of the index
+// backfill or deletion that the call kicks off.
+func lockTable(tn string, timeout time.Duration) (func(), error) {
+	v, _ := tableLocks.LoadOrStore(tn, make(chan struct{}, 1))
+	sem := v.(chan struct{})
+
+	select {
+	case sem <- struct{}{}:
+		return func() { <-sem }, nil
+	default:
+	}
+
+	log.Printf("[DEBUG] Waiting for an in-flight index operation on table %s to finish", tn)
+
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+
+	select {
+	case sem <- struct{}{}:
+		return func() { <-sem }, nil
+	case <-t.C:
+		return nil, fmt.Errorf("timed out after %s waiting for an in-flight index operation on table %s to finish", timeout, tn)
+	}
+}
+
+const maxTableUpdateRetries = 3
+
+// Variables rather than constants so tests can shrink them.
+var (
+	initialRetryBackoff = 2 * time.Second
+	maxRetryBackoff     = 30 * time.Second
+)
+
+// backoff draws its jitter from the global math/rand source, which this
+// module's Go version leaves deterministically seeded. Without this, every
+// provider process would retry on an identical schedule and concurrent runs
+// would collide on exactly the same attempts.
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
+func newTableUpdateBackoff(timeout time.Duration) backoff.BackOff {
+	b := backoff.NewExponentialBackOff()
+	b.InitialInterval = initialRetryBackoff
+	b.MaxInterval = maxRetryBackoff
+	b.MaxElapsedTime = timeout
+
+	return backoff.WithMaxRetries(b, maxTableUpdateRetries)
+}
+
+func isTableBusy(err error) bool {
+	aerr, ok := err.(awserr.Error)
+	if !ok {
+		return false
+	}
+
+	switch aerr.Code() {
+	case dynamodb.ErrCodeResourceInUseException, dynamodb.ErrCodeLimitExceededException:
+		return true
+	default:
+		return false
+	}
+}
+
+func retryOnConcurrentTableUpdate(timeout time.Duration, fn func() error) error {
+	return backoff.RetryNotify(
+		func() error {
+			err := fn()
+			if err != nil && !isTableBusy(err) {
+				return backoff.Permanent(err)
+			}
+
+			return err
+		},
+		newTableUpdateBackoff(timeout),
+		func(err error, next time.Duration) {
+			log.Printf("[DEBUG] Table busy with another index operation, retrying in %s: %s", next, err)
+		},
+	)
 }
 
 func describeGSI(c *dynamodb.DynamoDB, tn string, in string) (*dynamodb.TableDescription, *dynamodb.GlobalSecondaryIndexDescription, error) {

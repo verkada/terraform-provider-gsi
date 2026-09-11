@@ -4,6 +4,7 @@ go 1.17
 
 require (
 	github.com/aws/aws-sdk-go v1.44.184
+	github.com/cenkalti/backoff/v4 v4.1.3
 	github.com/hashicorp/terraform-plugin-sdk/v2 v2.8.0
 )
 
