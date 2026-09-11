@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/cenkalti/backoff/v4"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
@@ -520,24 +521,21 @@ var (
 	maxRetryBackoff     = 30 * time.Second
 )
 
-// Seeded explicitly because this module targets a Go version whose global
-// source is deterministic, which would give every provider process an
-// identical backoff sequence and defeat the jitter.
-var (
-	jitterMu  sync.Mutex
-	jitterRNG = rand.New(rand.NewSource(time.Now().UnixNano()))
-)
+// backoff draws its jitter from the global math/rand source, which this
+// module's Go version leaves deterministically seeded. Without this, every
+// provider process would retry on an identical schedule and concurrent runs
+// would collide on exactly the same attempts.
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
 
-func jitteredBackoff(attempt int) time.Duration {
-	d := initialRetryBackoff << (attempt - 1)
-	if d > maxRetryBackoff {
-		d = maxRetryBackoff
-	}
+func newTableUpdateBackoff(timeout time.Duration) backoff.BackOff {
+	b := backoff.NewExponentialBackOff()
+	b.InitialInterval = initialRetryBackoff
+	b.MaxInterval = maxRetryBackoff
+	b.MaxElapsedTime = timeout
 
-	jitterMu.Lock()
-	defer jitterMu.Unlock()
-
-	return d/2 + time.Duration(jitterRNG.Int63n(int64(d/2)))
+	return backoff.WithMaxRetries(b, maxTableUpdateRetries)
 }
 
 func isTableBusy(err error) bool {
@@ -555,32 +553,20 @@ func isTableBusy(err error) bool {
 }
 
 func retryOnConcurrentTableUpdate(timeout time.Duration, fn func() error) error {
-	deadline := time.Now().Add(timeout)
+	return backoff.RetryNotify(
+		func() error {
+			err := fn()
+			if err != nil && !isTableBusy(err) {
+				return backoff.Permanent(err)
+			}
 
-	var err error
-	for attempt := 0; attempt <= maxTableUpdateRetries; attempt++ {
-		if err = fn(); err == nil {
-			return nil
-		}
-
-		if !isTableBusy(err) {
 			return err
-		}
-
-		if attempt == maxTableUpdateRetries {
-			break
-		}
-
-		backoff := jitteredBackoff(attempt + 1)
-		if time.Now().Add(backoff).After(deadline) {
-			break
-		}
-
-		log.Printf("[DEBUG] Table busy with another index operation, retrying in %s: %s", backoff, err)
-		time.Sleep(backoff)
-	}
-
-	return err
+		},
+		newTableUpdateBackoff(timeout),
+		func(err error, next time.Duration) {
+			log.Printf("[DEBUG] Table busy with another index operation, retrying in %s: %s", next, err)
+		},
+	)
 }
 
 func describeGSI(c *dynamodb.DynamoDB, tn string, in string) (*dynamodb.TableDescription, *dynamodb.GlobalSecondaryIndexDescription, error) {

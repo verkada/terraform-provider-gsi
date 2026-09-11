@@ -11,6 +11,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/cenkalti/backoff/v4"
 )
 
 // shortenBackoff keeps the retry tests fast; they assert on call counts and
@@ -141,31 +142,54 @@ func TestRetryOnConcurrentTableUpdatePassesThroughSuccess(t *testing.T) {
 	}
 }
 
-func TestJitteredBackoffStaysInRangeAndVaries(t *testing.T) {
+func TestTableUpdateBackoffIsJittered(t *testing.T) {
 	seen := map[time.Duration]bool{}
 
 	for i := 0; i < 50; i++ {
-		got := jitteredBackoff(1)
-		if got < initialRetryBackoff/2 || got >= initialRetryBackoff {
-			t.Fatalf("backoff %s outside [%s, %s)", got, initialRetryBackoff/2, initialRetryBackoff)
-		}
-		seen[got] = true
+		// The first interval is drawn from InitialInterval scaled by the
+		// randomization factor, so repeated first draws should differ.
+		seen[newTableUpdateBackoff(time.Minute).NextBackOff()] = true
 	}
 
 	if len(seen) == 1 {
 		t.Fatal("expected jitter to produce varying backoffs")
 	}
+
+	for got := range seen {
+		if got <= 0 || got > maxRetryBackoff {
+			t.Fatalf("backoff %s outside (0, %s]", got, maxRetryBackoff)
+		}
+	}
 }
 
-func TestJitteredBackoffGrowsAndCaps(t *testing.T) {
-	// Attempt 1 draws from [1s, 2s), attempt 2 from [2s, 4s): the ranges do
-	// not overlap, so growth is observable without flaking on the jitter.
-	if first, second := jitteredBackoff(1), jitteredBackoff(2); second <= first {
-		t.Fatalf("expected backoff to grow, got %s then %s", first, second)
+func TestTableUpdateBackoffStopsAtRetryCap(t *testing.T) {
+	b := newTableUpdateBackoff(time.Hour)
+
+	for i := 0; i < maxTableUpdateRetries; i++ {
+		if got := b.NextBackOff(); got == backoff.Stop {
+			t.Fatalf("backoff stopped early, after %d of %d retries", i, maxTableUpdateRetries)
+		}
 	}
 
-	if got := jitteredBackoff(20); got >= maxRetryBackoff {
-		t.Fatalf("expected backoff to cap below %s, got %s", maxRetryBackoff, got)
+	if got := b.NextBackOff(); got != backoff.Stop {
+		t.Fatalf("expected Stop after %d retries, got %s", maxTableUpdateRetries, got)
+	}
+}
+
+func TestTableUpdateBackoffRespectsCeiling(t *testing.T) {
+	b := backoff.NewExponentialBackOff()
+	b.InitialInterval = initialRetryBackoff
+	b.MaxInterval = maxRetryBackoff
+
+	// MaxInterval bounds the pre-jitter interval; the jitter itself can
+	// exceed it by the randomization factor, which is the library's
+	// documented behaviour.
+	ceiling := time.Duration(float64(maxRetryBackoff) * (1 + backoff.DefaultRandomizationFactor))
+
+	for i := 0; i < 50; i++ {
+		if got := b.NextBackOff(); got > ceiling {
+			t.Fatalf("backoff %s exceeded ceiling %s on draw %d", got, ceiling, i)
+		}
 	}
 }
 
