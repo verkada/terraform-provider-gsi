@@ -2,6 +2,7 @@ package provider
 
 import (
 	"errors"
+	"os"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -113,6 +114,12 @@ func newClient(region string, accessKey string, secretKey string, token string, 
 	} else if profile != "" {
 		options.SharedConfigState = session.SharedConfigEnable
 		options.Profile = profile
+	} else if f := os.Getenv("AWS_SHARED_CREDENTIALS_FILE"); f != "" {
+		// HCP Terraform dynamic credentials point AWS_SHARED_CREDENTIALS_FILE at a file whose
+		// [default] profile has role_arn and web_identity_token_file. The SDK only reads role_arn
+		// from a shared *config* file, so load that file as one.
+		options.SharedConfigState = session.SharedConfigEnable
+		options.SharedConfigFiles = []string{f}
 	} else if validate {
 		return nil, errors.New("no credentials for AWS")
 	}
