@@ -1,3 +1,9 @@
+## 0.6.5 (October 7, 2026)
+
+BUG FIXES
+
+* Authenticate when `AWS_SHARED_CREDENTIALS_FILE` points at a profile with `role_arn` and `web_identity_token_file` (for example HCP Terraform dynamic credentials) and no explicit keys or profile are configured.
+
 ## 0.4.0 (April 6, 2023)
 
 ENHANCEMENTS
