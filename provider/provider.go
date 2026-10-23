@@ -32,7 +32,7 @@ func providerWithConfigure(cfgFn schema.ConfigureFunc) *schema.Provider {
 				Type:        schema.TypeString,
 				Optional:    true,
 				DefaultFunc: schema.EnvDefaultFunc("AWS_SECRET_ACCESS_KEY", nil),
-				Description: "AWS secret key ID",
+				Description: "AWS secret access key",
 			},
 
 			"token": {
