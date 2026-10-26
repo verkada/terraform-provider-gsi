@@ -9,7 +9,7 @@ import (
 
 // StringInSlice returns a SchemaValidateFunc which tests if the provided value
 // is of type string and matches the value of an element in the valid slice
-// will test with in lower case if ignoreCase is true
+// will test in lower case if ignoreCase is true
 func stringInSlice(valid []string, ignoreCase bool) schema.SchemaValidateFunc {
 	return func(i interface{}, k string) (warnings []string, errors []error) {
 		v, ok := i.(string)

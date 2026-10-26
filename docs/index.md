@@ -22,5 +22,5 @@ description: |-
 - **dynamodb_endpoint** (String) AWS dynamodb endpoint
 - **profile** (String) AWS profile
 - **region** (String) AWS region
-- **secret_key** (String) AWS secret key ID
+- **secret_key** (String) AWS secret access key
 - **token** (String) AWS session token
